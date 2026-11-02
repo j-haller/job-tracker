@@ -1,0 +1,17 @@
+# Copy to data/sources.toml. One table per source; the table name is the source key.
+# Secrets never go here; name an env variable instead (api_key_env = "...").
+
+[jobsch]
+enabled = true
+adapter = "jobsch"
+interval_minutes = 60
+fetch_on_startup = true
+request_delay_seconds = 1.0
+timeout_seconds = 20
+query = "Software Developer"       # plain text; the adapter URL-encodes it
+# Without page: the adapter loads every result page.
+search_url = "https://job-search-api.jobs.ch/search?query={query}&rows=300"
+detail_url = "https://www.jobs.ch/api/v1/public/search/job/{id}"
+
+[jobsch.headers]
+Accept = "application/json"

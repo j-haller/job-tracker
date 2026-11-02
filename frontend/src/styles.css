@@ -1,0 +1,12 @@
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+  color: #1f2328;
+  background: #fff;
+}
+main {
+  padding: 16px;
+}
+.error {
+  color: #b42318;
+}

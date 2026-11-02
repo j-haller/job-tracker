@@ -1,0 +1,14 @@
+services:
+  jobtracker:
+    build: .
+    container_name: jobtracker
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      - TZ=Europe/Zurich
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./data:/data
