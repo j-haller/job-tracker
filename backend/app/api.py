@@ -29,6 +29,11 @@ def status():
     )
 
 
+@api.get("/meta")
+def meta():
+    return jsonify(status_values=db.STATUS_VALUES)
+
+
 @api.get("/listings")
 def listings():
     config: Config = current_app.config["APP_CONFIG"]

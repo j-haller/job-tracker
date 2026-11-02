@@ -46,6 +46,10 @@ def add_rating(db_path: Path, listing_id: str, rating: int, created_at: str, pro
         conn.execute(f"INSERT INTO ratings ({', '.join(values)}) VALUES ({marks})", tuple(values.values()))
 
 
+def test_meta_lists_status_values(client):
+    assert client.get("/api/meta").get_json()["status_values"] == list(db.STATUS_VALUES)
+
+
 def test_list_is_empty_without_listings(client):
     res = client.get("/api/listings")
     assert res.status_code == 200 and res.get_json() == []
