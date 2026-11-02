@@ -29,6 +29,49 @@ def status():
     )
 
 
+@api.get("/listings")
+def listings():
+    config: Config = current_app.config["APP_CONFIG"]
+    with db.connection(config.db_path) as conn:
+        return jsonify(db.list_listings(conn, _profile_status(config)["hash"]))
+
+
+# path converter: IDs come from the source and may contain an encoded slash.
+@api.get("/listings/<path:listing_id>")
+def listing_detail(listing_id: str):
+    config: Config = current_app.config["APP_CONFIG"]
+    with db.connection(config.db_path) as conn:
+        listing = db.get_listing(conn, listing_id, _profile_status(config)["hash"])
+    if listing is None:
+        return jsonify(error=f"Unknown listing '{listing_id}'"), 404
+    return jsonify(listing)
+
+
+@api.post("/listings/<path:listing_id>/status")
+def listing_status(listing_id: str):
+    config: Config = current_app.config["APP_CONFIG"]
+    body = request.get_json(silent=True)
+    error = _status_body_error(body)
+    if error:
+        return jsonify(error=error), 400
+    with db.connection(config.db_path) as conn:
+        if not db.update_status(conn, listing_id, body["status"]):
+            return jsonify(error=f"Unknown listing '{listing_id}'"), 404
+        if "note" in body:
+            db.update_note(conn, listing_id, body["note"])
+        return jsonify(db.get_listing(conn, listing_id, _profile_status(config)["hash"]))
+
+
+def _status_body_error(body: object) -> str | None:
+    if not isinstance(body, dict):
+        return "Body must be a JSON object"
+    if body.get("status") not in db.STATUS_VALUES:
+        return f"status must be one of: {', '.join(db.STATUS_VALUES)}"
+    if "note" in body and not isinstance(body["note"], (str, type(None))):
+        return "note must be a string or null"
+    return None
+
+
 @api.post("/fetch")
 def fetch():
     manager: FetchManager = current_app.config["FETCH_MANAGER"]

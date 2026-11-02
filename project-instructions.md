@@ -534,7 +534,9 @@ A small JSON API under `/api`; everything else serves the React build (with a fa
 
 All write endpoints are plain POST/DELETE without auth (LAN only). Validate IDs and inputs anyway, and use parameterized SQL everywhere.
 
-Listing IDs have the form `<source>:<external_id>` and are URL-encoded in paths. Duplicates from other sources are not returned as separate rows; the list and detail endpoints attach them to the first listing as `also_on` (source and URL).
+Listing IDs have the form `<source>:<external_id>` and are URL-encoded in paths. Duplicates from other sources are not returned as separate rows; the list and detail endpoints attach them to the first listing as `also_on` (source and URL). Asking for a duplicate's own ID returns 404, since status and ratings live on the first listing.
+
+In the status endpoint, `status` is required and a missing `note` leaves the stored note unchanged. `status_updated_at` only moves when the status really changes.
 
 ## Frontend
 

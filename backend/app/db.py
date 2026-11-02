@@ -15,6 +15,23 @@ SCHEMA_FILE = Path(__file__).with_name("schema.sql")
 # Numbered migrations, tracked in PRAGMA user_version. Append only.
 MIGRATIONS: list[str] = [SCHEMA_FILE.read_text(encoding="utf-8")]
 
+STATUS_VALUES = ("new", "interested", "applied", "interview", "offer", "rejected", "not_interested")
+
+_LISTING_COLUMNS = """
+  l.id, l.source, l.external_id, l.title, l.company, l.location, l.workload,
+  l.published_at, l.url, l.detail_error, l.first_seen_at, l.last_seen_at,
+  l.is_active, l.status, l.status_updated_at, l.note
+"""
+# The current rating is the newest row in ratings.
+_WITH_CURRENT_RATING = """
+  r.rating, r.created_at AS rated_at, r.summary, r.missing_required,
+  r.profile_hash AS rating_profile_hash
+FROM listings l
+LEFT JOIN ratings r ON r.id = (
+  SELECT id FROM ratings WHERE listing_id = l.id ORDER BY created_at DESC, id DESC LIMIT 1
+)
+"""
+
 
 @dataclass
 class RunCounts:
@@ -197,3 +214,109 @@ def listing_counts(conn: sqlite3.Connection) -> dict:
         "SELECT COUNT(*) AS total, COALESCE(SUM(is_active), 0) AS active FROM listings"
     ).fetchone()
     return dict(row)
+
+
+def list_listings(conn: sqlite3.Connection, profile_hash: str | None) -> list[dict]:
+    """All listings for the table, without long texts or raw data; duplicates are attached."""
+    rows = conn.execute(
+        f"SELECT {_LISTING_COLUMNS}, {_WITH_CURRENT_RATING} "
+        "WHERE l.duplicate_of IS NULL ORDER BY l.first_seen_at DESC, l.id"
+    ).fetchall()
+    also_on = _duplicates_by_listing(conn)
+    return [_listing_dict(row, profile_hash, also_on.get(row["id"], [])) for row in rows]
+
+
+def get_listing(conn: sqlite3.Connection, listing_key: str, profile_hash: str | None) -> dict | None:
+    """One listing with description, current requirements and rating history."""
+    row = conn.execute(
+        f"SELECT {_LISTING_COLUMNS}, l.description_text, r.requirements_json, r.dealbreakers_json, "
+        f"{_WITH_CURRENT_RATING} WHERE l.id = ? AND l.duplicate_of IS NULL",
+        (listing_key,),
+    ).fetchone()
+    if row is None:
+        return None
+    listing = _listing_dict(row, profile_hash, _duplicates_by_listing(conn).get(listing_key, []))
+    listing["description_text"] = row["description_text"]
+    listing["requirements"] = json.loads(row["requirements_json"] or "[]")
+    listing["dealbreakers"] = json.loads(row["dealbreakers_json"] or "[]")
+    listing["rating_history"] = _rating_history(conn, listing_key, profile_hash)
+    return listing
+
+
+def update_status(conn: sqlite3.Connection, listing_key: str, status: str) -> bool:
+    """Set the status; status_updated_at only moves when the status really changes."""
+    with conn:
+        cur = conn.execute(
+            "UPDATE listings SET status_updated_at = "
+            "CASE WHEN status <> ? THEN ? ELSE status_updated_at END, status = ? "
+            "WHERE id = ? AND duplicate_of IS NULL",
+            (status, utc_now(), status, listing_key),
+        )
+    return cur.rowcount > 0
+
+
+def update_note(conn: sqlite3.Connection, listing_key: str, note: str | None) -> None:
+    with conn:
+        conn.execute("UPDATE listings SET note = ? WHERE id = ?", (note, listing_key))
+
+
+def _listing_dict(row: sqlite3.Row, profile_hash: str | None, also_on: list[dict]) -> dict:
+    return {
+        "id": row["id"],
+        "source": row["source"],
+        "external_id": row["external_id"],
+        "title": row["title"],
+        "company": row["company"],
+        "location": row["location"],
+        "workload": row["workload"],
+        "published_at": row["published_at"],
+        "url": row["url"],
+        "detail_error": row["detail_error"],
+        "first_seen_at": row["first_seen_at"],
+        "last_seen_at": row["last_seen_at"],
+        "is_active": bool(row["is_active"]),
+        "status": row["status"],
+        "status_updated_at": row["status_updated_at"],
+        "note": row["note"],
+        "rating": row["rating"],
+        "rated_at": row["rated_at"],
+        "summary": row["summary"],
+        "missing_required": row["missing_required"],
+        "is_stale": _is_stale(row["rating_profile_hash"], profile_hash),
+        "also_on": also_on,
+    }
+
+
+def _is_stale(rating_hash: str | None, profile_hash: str | None) -> bool:
+    return rating_hash is not None and rating_hash != profile_hash
+
+
+def _duplicates_by_listing(conn: sqlite3.Connection) -> dict[str, list[dict]]:
+    rows = conn.execute(
+        "SELECT duplicate_of, source, url FROM listings WHERE duplicate_of IS NOT NULL ORDER BY source"
+    )
+    result: dict[str, list[dict]] = {}
+    for row in rows:
+        result.setdefault(row["duplicate_of"], []).append({"source": row["source"], "url": row["url"]})
+    return result
+
+
+def _rating_history(conn: sqlite3.Connection, listing_key: str, profile_hash: str | None) -> list[dict]:
+    rows = conn.execute(
+        "SELECT id, backend, model, rating, summary, missing_required, profile_hash, created_at "
+        "FROM ratings WHERE listing_id = ? ORDER BY created_at DESC, id DESC",
+        (listing_key,),
+    )
+    return [
+        {
+            "id": row["id"],
+            "backend": row["backend"],
+            "model": row["model"],
+            "rating": row["rating"],
+            "summary": row["summary"],
+            "missing_required": row["missing_required"],
+            "created_at": row["created_at"],
+            "is_stale": _is_stale(row["profile_hash"], profile_hash),
+        }
+        for row in rows
+    ]
